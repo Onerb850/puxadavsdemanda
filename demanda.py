@@ -4,15 +4,26 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 # ==========================================
-# CONFIGURAÇÃO DA PÁGINA
+# CONFIGURAÇÃO DA PÁGINA E CABEÇALHO
 # ==========================================
 st.set_page_config(layout="wide", page_title="Gestão de Puxada")
-st.title("📦 Acompanhamento de Puxada vs Demanda (HL)")
+
+# Criando colunas para alinhar o título e o botão de atualização
+col_titulo, col_botao = st.columns([8, 2])
+
+with col_titulo:
+    st.title("📦 Acompanhamento de Puxada vs Demanda (HL)")
+
+with col_botao:
+    st.write("") # Pequeno espaço para alinhar o botão com o texto do título
+    if st.button("🔄 Atualizar Dados Agora", use_container_width=True):
+        st.cache_data.clear() # Limpa a memória cache (força a ir ao Google Drive)
+        st.rerun() # Recarrega a página instantaneamente
 
 # ==========================================
-# TRATAMENTO E CARREGAMENTO DOS DADOS (VIA GOOGLE DRIVE)
+# TRATAMENTO E CARREGAMENTO DOS DADOS
 # ==========================================
-@st.cache_data(ttl=600) # O cache expira a cada 10 minutos para garantir dados atualizados
+@st.cache_data(ttl=600) # Cache automático de 10 minutos mantido como plano B
 def carregar_dados():
     try:
         # 1. Carregar DEMANDA do Google Drive
