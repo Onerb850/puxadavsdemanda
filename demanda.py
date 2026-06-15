@@ -8,22 +8,21 @@ import plotly.graph_objects as go
 # ==========================================
 st.set_page_config(layout="wide", page_title="Gestão de Puxada")
 
-# Criando colunas para alinhar o título e o botão de atualização
 col_titulo, col_botao = st.columns([8, 2])
 
 with col_titulo:
-    st.title("📦 Acompanhamento de Puxada vs Demanda (HL)")
+    st.title("📦 Acompanhamento de Puxada vs Demanda (HL, Caixas e Pallets)")
 
 with col_botao:
-    st.write("") # Pequeno espaço para alinhar o botão com o texto do título
+    st.write("") 
     if st.button("🔄 Atualizar Dados Agora", use_container_width=True):
-        st.cache_data.clear() # Limpa a memória cache (força a ir ao Google Drive)
-        st.rerun() # Recarrega a página instantaneamente
+        st.cache_data.clear() 
+        st.rerun() 
 
 # ==========================================
 # TRATAMENTO E CARREGAMENTO DOS DADOS
 # ==========================================
-@st.cache_data(ttl=600) # Cache automático de 10 minutos mantido como plano B
+@st.cache_data(ttl=600) 
 def carregar_dados():
     try:
         # 1. Carregar DEMANDA do Google Drive
@@ -46,19 +45,43 @@ def carregar_dados():
         df_puxado = df_puxado.rename(columns={'Cód. Prod': 'SKU', 'Quantidade HL': 'Puxado_HL'})
         df_puxado['Puxado_HL'] = pd.to_numeric(df_puxado['Puxado_HL'].astype(str).str.replace(',', '.'), errors='coerce')
         
-        # 3. Tratar a Data 
+        # 3. Carregar REFERÊNCIA DE CAIXAS/PALLETS (0111.csv)
+        # Lendo localmente por enquanto para os seus testes
+        df_ref = pd.read_csv('0111.csv', sep=';', encoding='latin1')
+        df_ref.columns = df_ref.columns.str.strip()
+        df_ref['Fator Hecto'] = pd.to_numeric(df_ref['Fator Hecto'].astype(str).str.replace(',', '.'), errors='coerce')
+        df_ref = df_ref[['Código', 'Fator Hecto', 'Caixas Pallet']]
+        
+        # 4. Tratar a Data 
         df_puxado['Data Puxada'] = pd.to_datetime(df_puxado['Data Puxada'], dayfirst=True, format='mixed', errors='coerce')
         df_puxado['Semana'] = 'S' + ((df_puxado['Data Puxada'].dt.day - 1) // 7 + 1).astype(str)
         
+        # 5. Cruzamento de Dados (Merge)
         df_puxado_total = df_puxado.groupby('SKU')['Puxado_HL'].sum().reset_index()
         df_final = pd.merge(df_demanda, df_puxado_total, on='SKU', how='left')
+        df_final = pd.merge(df_final, df_ref, left_on='SKU', right_on='Código', how='left')
+        
         df_final['Puxado_HL'] = df_final['Puxado_HL'].fillna(0)
         df_final['Demanda_HL'] = df_final['Demanda_HL'].fillna(0)
+        df_final['Fator Hecto'] = df_final['Fator Hecto'].fillna(0)
+        df_final['Caixas Pallet'] = df_final['Caixas Pallet'].fillna(0)
         
-        # 4. Cálculos e Status
+        # 6. Cálculos de Caixas, Pallets e Status
         df_final['% Atendido'] = 0.0
         mask = df_final['Demanda_HL'] > 0
         df_final.loc[mask, '% Atendido'] = (df_final.loc[mask, 'Puxado_HL'] / df_final.loc[mask, 'Demanda_HL']) * 100
+        
+        def calc_caixas(hl, fator):
+            return hl / fator if fator > 0 else 0
+            
+        def calc_pallets(cx, cx_pallet):
+            return cx / cx_pallet if cx_pallet > 0 else 0
+            
+        df_final['Demanda_Caixas'] = df_final.apply(lambda row: calc_caixas(row['Demanda_HL'], row['Fator Hecto']), axis=1)
+        df_final['Puxado_Caixas'] = df_final.apply(lambda row: calc_caixas(row['Puxado_HL'], row['Fator Hecto']), axis=1)
+        
+        df_final['Demanda_Pallets'] = df_final.apply(lambda row: calc_pallets(row['Demanda_Caixas'], row['Caixas Pallet']), axis=1)
+        df_final['Puxado_Pallets'] = df_final.apply(lambda row: calc_pallets(row['Puxado_Caixas'], row['Caixas Pallet']), axis=1)
         
         def classificar_faixa(row):
             if row['Demanda_HL'] == 0:
@@ -80,14 +103,18 @@ df_resumo, df_historico_puxada = carregar_dados()
 # ==========================================
 # 1. KPIs GLOBAIS
 # ==========================================
-total_demanda = df_resumo['Demanda_HL'].sum()
-total_puxado = df_resumo['Puxado_HL'].sum()
-percentual_geral = (total_puxado / total_demanda) * 100 if total_demanda > 0 else 0
+total_demanda_hl = df_resumo['Demanda_HL'].sum()
+total_puxado_hl = df_resumo['Puxado_HL'].sum()
+total_demanda_pallets = df_resumo['Demanda_Pallets'].sum()
+total_puxado_pallets = df_resumo['Puxado_Pallets'].sum()
+percentual_geral = (total_puxado_hl / total_demanda_hl) * 100 if total_demanda_hl > 0 else 0
 
-col1, col2, col3 = st.columns(3)
-col1.metric("Demanda Total (HL)", f"{total_demanda:,.1f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-col2.metric("Volume Puxado (HL)", f"{total_puxado:,.1f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-col3.metric("Atendimento Geral do Mês", f"{percentual_geral:.1f}%")
+col1, col2, col3, col4, col5 = st.columns(5)
+col1.metric("Demanda Total (HL)", f"{total_demanda_hl:,.1f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+col2.metric("Volume Puxado (HL)", f"{total_puxado_hl:,.1f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+col3.metric("Demanda (Pallets)", f"{total_demanda_pallets:,.1f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+col4.metric("Puxado (Pallets)", f"{total_puxado_pallets:,.1f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+col5.metric("Atendimento Geral", f"{percentual_geral:.1f}%")
 
 st.divider()
 
@@ -96,33 +123,34 @@ st.divider()
 # ==========================================
 st.subheader("📊 Ranking de Produtos")
 
-# Botões de alternância direta do Ranking
 opcoes_filtro = ["Abaixo da Demanda (Menores %)", "Acima da Demanda (Maiores %)"]
 filtro_ranking = st.radio("Selecione a visualização do ranking:", opcoes_filtro, horizontal=True)
 
-# Filtra SKUs sem planejamento/sem demanda 
 df_valido = df_resumo[~df_resumo['Faixa'].isin(['Sem Demanda', '🔵 Puxada Não Planejada'])].copy()
 
 if filtro_ranking == "Abaixo da Demanda (Menores %)":
     df_filtrado = df_valido[df_valido['% Atendido'] < 100].sort_values(by=['% Atendido', 'Demanda_HL'], ascending=[False, False])
-    cor_texto = '#B22222' # Vermelho escuro
+    cor_texto = '#B22222' 
 else:
     df_filtrado = df_valido[df_valido['% Atendido'] >= 100].sort_values(by=['% Atendido', 'Demanda_HL'], ascending=[False, False])
-    cor_texto = '#006400' # Verde escuro
+    cor_texto = '#006400' 
 
-# Função de estilo para colorir a fonte da coluna "% Atendido"
 def cor_condicional(val):
     return f'color: {cor_texto}; font-weight: bold;'
 
-styler = df_filtrado[['Descrição SKU', 'Demanda_HL', 'Puxado_HL', '% Atendido']].style\
+# Adicionado as colunas de Caixas e Pallets na visualização do Ranking
+styler = df_filtrado[['Descrição SKU', 'Demanda_HL', 'Puxado_HL', 'Demanda_Caixas', 'Puxado_Caixas', 'Demanda_Pallets', 'Puxado_Pallets', '% Atendido']].style\
     .format({
         'Demanda_HL': '{:.1f}', 
         'Puxado_HL': '{:.1f}', 
+        'Demanda_Caixas': '{:,.0f}', # Formata sem casas decimais
+        'Puxado_Caixas': '{:,.0f}',
+        'Demanda_Pallets': '{:.1f}', 
+        'Puxado_Pallets': '{:.1f}', 
         '% Atendido': '{:.1f}%'
     })\
     .map(cor_condicional, subset=['% Atendido'])
 
-# Aplicação do dataframe com column_config para centralização absoluta
 st.dataframe(
     styler, 
     use_container_width=True, 
@@ -130,8 +158,12 @@ st.dataframe(
     height=400,
     column_config={
         "Descrição SKU": st.column_config.Column("Descrição SKU", alignment="center"),
-        "Demanda_HL": st.column_config.Column("Demanda_HL", alignment="center"),
-        "Puxado_HL": st.column_config.Column("Puxado_HL", alignment="center"),
+        "Demanda_HL": st.column_config.Column("Demanda HL", alignment="center"),
+        "Puxado_HL": st.column_config.Column("Puxado HL", alignment="center"),
+        "Demanda_Caixas": st.column_config.Column("Demanda Caixas", alignment="center"),
+        "Puxado_Caixas": st.column_config.Column("Puxado Caixas", alignment="center"),
+        "Demanda_Pallets": st.column_config.Column("Demanda Pallets", alignment="center"),
+        "Puxado_Pallets": st.column_config.Column("Puxado Pallets", alignment="center"),
         "% Atendido": st.column_config.Column("% Atendido", alignment="center")
     }
 )
@@ -142,24 +174,34 @@ st.divider()
 # 3. CONSULTA INDIVIDUAL DE PRODUTO
 # ==========================================
 st.subheader("🔎 Consulta Individual de Produto")
-st.markdown("Selecione um produto para acompanhar o atingimento exato da demanda VS puxada.")
+st.markdown("Selecione um produto para acompanhar o atingimento detalhado em HL, Caixas e Pallets.")
 
 lista_produtos = df_resumo['Descrição SKU'].dropna().unique().tolist()
 lista_produtos.sort()
 produto_selecionado = st.selectbox("Selecione o SKU:", lista_produtos)
 df_prod = df_resumo[df_resumo['Descrição SKU'] == produto_selecionado].iloc[0]
 
-# Métricas individuais em cartões
+# Linha 1: Métricas de HL e Status
 col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-col_m1.metric("Demanda Total (HL)", f"{df_prod['Demanda_HL']:.1f}".replace('.', ','))
-col_m2.metric("Puxado (HL)", f"{df_prod['Puxado_HL']:.1f}".replace('.', ','))
-col_m3.metric("Atingimento", f"{df_prod['% Atendido']:.1f}%" if df_prod['Demanda_HL'] > 0 else "N/A")
+col_m1.metric("Demanda (HL)", f"{df_prod['Demanda_HL']:,.1f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+col_m2.metric("Puxado (HL)", f"{df_prod['Puxado_HL']:,.1f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+col_m3.metric("Atingimento Geral", f"{df_prod['% Atendido']:.1f}%" if df_prod['Demanda_HL'] > 0 else "N/A")
+
 with col_m4:
     status = df_prod['Faixa']
-    if "Crítico" in status: st.error(f"**Status:** {status}")
-    elif "Atenção" in status: st.warning(f"**Status:** {status}")
-    elif "Não Planejada" in status: st.info(f"**Status:** {status}")
-    else: st.success(f"**Status:** {status}")
+    if "Crítico" in status: st.error(f"**{status}**")
+    elif "Atenção" in status: st.warning(f"**{status}**")
+    elif "Não Planejada" in status: st.info(f"**{status}**")
+    else: st.success(f"**{status}**")
+
+st.write("") 
+
+# Linha 2: Métricas Desmembradas de Caixas e Pallets
+col_c1, col_c2, col_p1, col_p2 = st.columns(4)
+col_c1.metric("Demanda (Caixas)", f"{df_prod['Demanda_Caixas']:,.0f}".replace(',', '.'))
+col_c2.metric("Puxado (Caixas)", f"{df_prod['Puxado_Caixas']:,.0f}".replace(',', '.'))
+col_p1.metric("Demanda (Pallets)", f"{df_prod['Demanda_Pallets']:,.1f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+col_p2.metric("Puxado (Pallets)", f"{df_prod['Puxado_Pallets']:,.1f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
 
 st.write("") 
 
@@ -203,7 +245,7 @@ for i, row in df_plot.iterrows():
         texto = "Sem demanda planejada"
     else:
         perc = (row['Puxado'] / row['Demanda'] * 100) if row['Demanda'] > 0 else 0
-        cor = '#8BC34A' # Verde Claro 
+        cor = '#8BC34A' 
         valor_bar = min(perc, 100) 
         texto = f"{row['Puxado']:,.0f} / {row['Demanda']:,.0f} HL ({perc:.1f}%)"
 
@@ -223,7 +265,7 @@ for i, row in df_plot.iterrows():
 
 fig.update_layout(
     barmode='overlay', 
-    title=dict(text="Ritmo de Puxada", font=dict(size=20, family='Segoe UI, Arial, sans-serif', color='#1f2c56')),
+    title=dict(text="Ritmo de Puxada (HL)", font=dict(size=20, family='Segoe UI, Arial, sans-serif', color='#1f2c56')),
     plot_bgcolor='rgba(0,0,0,0)', 
     paper_bgcolor='rgba(0,0,0,0)', 
     margin=dict(t=60, b=20, l=120, r=120), 
