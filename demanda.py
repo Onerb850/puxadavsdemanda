@@ -6,12 +6,13 @@ import plotly.graph_objects as go
 # ==========================================
 # CONFIGURAÇÃO DA PÁGINA E CABEÇALHO
 # ==========================================
-st.set_page_config(layout="wide", page_title="Gestão de Puxada")
+st.set_page_config(layout="wide", page_title="Puxada VS Demanda")
 
 col_titulo, col_botao = st.columns([8, 2])
 
 with col_titulo:
-    st.title("📦 Acompanhamento de Puxada vs Demanda (HL, Caixas e Pallets)")
+    # Título ajustado conforme solicitado
+    st.title("Puxada VS Demanda")
 
 with col_botao:
     st.write("") 
@@ -45,9 +46,12 @@ def carregar_dados():
         df_puxado = df_puxado.rename(columns={'Cód. Prod': 'SKU', 'Quantidade HL': 'Puxado_HL'})
         df_puxado['Puxado_HL'] = pd.to_numeric(df_puxado['Puxado_HL'].astype(str).str.replace(',', '.'), errors='coerce')
         
-        # 3. Carregar REFERÊNCIA DE CAIXAS/PALLETS (0111.csv)
-        # Lendo localmente por enquanto para os seus testes
-        df_ref = pd.read_csv('0111.csv', sep=';', encoding='latin1')
+        # 3. Carregar REFERÊNCIA DE CAIXAS/PALLETS (0111.csv) do Google Drive (CORRIGIDO)
+        id_ref = '1_MgBvqWlWjJYVuq9n6IKPr46jLvq7Ycm'
+        url_ref = f'https://drive.google.com/uc?id={id_ref}'
+        # A linha abaixo garante que lê do URL e não do ficheiro local
+        df_ref = pd.read_csv(url_ref, sep=';', encoding='latin1')
+        
         df_ref.columns = df_ref.columns.str.strip()
         df_ref['Fator Hecto'] = pd.to_numeric(df_ref['Fator Hecto'].astype(str).str.replace(',', '.'), errors='coerce')
         df_ref = df_ref[['Código', 'Fator Hecto', 'Caixas Pallet']]
@@ -138,12 +142,11 @@ else:
 def cor_condicional(val):
     return f'color: {cor_texto}; font-weight: bold;'
 
-# Adicionado as colunas de Caixas e Pallets na visualização do Ranking
 styler = df_filtrado[['Descrição SKU', 'Demanda_HL', 'Puxado_HL', 'Demanda_Caixas', 'Puxado_Caixas', 'Demanda_Pallets', 'Puxado_Pallets', '% Atendido']].style\
     .format({
         'Demanda_HL': '{:.1f}', 
         'Puxado_HL': '{:.1f}', 
-        'Demanda_Caixas': '{:,.0f}', # Formata sem casas decimais
+        'Demanda_Caixas': '{:,.0f}', 
         'Puxado_Caixas': '{:,.0f}',
         'Demanda_Pallets': '{:.1f}', 
         'Puxado_Pallets': '{:.1f}', 
